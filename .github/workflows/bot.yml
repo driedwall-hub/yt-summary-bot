@@ -14,13 +14,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore offset
+      - name: Restore seen videos cache
         uses: actions/cache@v4
         with:
-          path: offset.txt
-          key: telegram-offset-${{ github.run_id }}
+          path: seen_videos.json
+          key: seen-videos-${{ github.run_id }}
           restore-keys: |
-            telegram-offset-
+            seen-videos-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,11 +35,12 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python bot.py
 
-      - name: Save offset
+      - name: Save seen videos cache
         if: always()
         uses: actions/cache@v4
         with:
-          path: offset.txt
-          key: telegram-offset-${{ github.run_id }}
+          path: seen_videos.json
+          key: seen-videos-${{ github.run_id }}
