@@ -1,1 +1,45 @@
+name: YouTube Summary Bot
 
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore offset
+        uses: actions/cache@v4
+        with:
+          path: offset.txt
+          key: telegram-offset-${{ github.run_id }}
+          restore-keys: |
+            telegram-offset-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python bot.py
+
+      - name: Save offset
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: offset.txt
+          key: telegram-offset-${{ github.run_id }}
