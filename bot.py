@@ -109,10 +109,18 @@ def fetch_latest_videos(channel_id: str, max_count: int = 5) -> list[dict]:
 # ── 자막 추출 ─────────────────────────────────────────────
 LANGS = ["ko", "en", "ja", "zh-Hans", "zh-Hant"]
 
+def format_transcript(fetched) -> str:
+    lines = []
+    for s in fetched:
+        mins = int(s.start // 60)
+        secs = int(s.start % 60)
+        lines.append(f"[{mins:02d}:{secs:02d}] {s.text}")
+    return "\n".join(lines)
+
 def get_transcript(video_id: str) -> str | None:
     try:
         fetched = _ytt.fetch(video_id, languages=LANGS)
-        return " ".join(s.text for s in fetched)
+        return format_transcript(fetched)
     except CouldNotRetrieveTranscript:
         pass
     except Exception:
@@ -124,7 +132,7 @@ def get_transcript(video_id: str) -> str | None:
             lambda: tl.find_manually_created_transcript(LANGS),
         ]:
             try:
-                return " ".join(s.text for s in finder().fetch())
+                return format_transcript(finder().fetch())
             except Exception:
                 pass
     except Exception:
@@ -132,24 +140,66 @@ def get_transcript(video_id: str) -> str | None:
     return None
 
 # ── Gemini 요약 (429 시 재시도) ───────────────────────────
-_PROMPT_TEXT = """\
-아래는 YouTube 영상의 자막입니다. 한국어로 요약해주세요.
+_PROMPT_TEXT = """아래는 YouTube 영상의 자막입니다 (타임스탬프 포함).
+아래 형식에 맞게 한국어로 최대한 세세하게 요약해주세요.
+각 항목은 내용이 풍부할수록 좋습니다. 절대 축약하지 마세요.
 
-📌 **핵심 주제** (1줄)
-📝 **주요 내용** (3~5개 불릿)
-💡 **핵심 인사이트** (1~2줄)
+📌 **핵심 주제**
+- 영상이 다루는 핵심 주제를 2~3줄로 설명
 
-자막:
+📊 **배경 & 현황**
+- 영상에서 언급된 시장 상황, 최근 이슈, 수치, 데이터를 5~7개 불릿으로 구체적으로
+
+🗂 **주제별 상세 내용**
+각 주제마다 아래 형식으로 작성:
+[주제명]
+- 핵심 주장과 근거
+- 언급된 수치, 통계, 사례
+- 관련 종목이나 산업에 미치는 영향
+(주제가 여러 개면 모두 작성)
+
+🔍 **언급된 종목 / 수치 / 키워드**
+- 종목명과 구체적 수치 (주가, 목표가, PER, 매출, 성장률 등)
+- 경제 지표, 정책, 용어 등
+
+⚠️ **리스크 & 주의사항**
+- 영상에서 언급된 리스크나 불확실성 요인
+
+💡 **핵심 인사이트 & 전망**
+- 3~4줄, 영상의 결론과 향후 투자 시사점
+
+자막 (타임스탬프 포함):
 {transcript}
 """
 
-_PROMPT_MULTI = """\
-이 YouTube 영상을 보고 한국어로 요약해주세요.
+_PROMPT_MULTI = """이 YouTube 영상을 보고 아래 형식에 맞게 한국어로 최대한 세세하게 요약해주세요.
+각 항목은 내용이 풍부할수록 좋습니다. 절대 축약하지 마세요.
 
-📌 **핵심 주제** (1줄)
-📝 **주요 내용** (3~5개 불릿)
-💡 **핵심 인사이트** (1~2줄)
+📌 **핵심 주제**
+- 영상이 다루는 핵심 주제를 2~3줄로 설명
+
+📊 **배경 & 현황**
+- 영상에서 언급된 시장 상황, 최근 이슈, 수치, 데이터를 5~7개 불릿으로 구체적으로
+
+🗂 **주제별 상세 내용**
+각 주제마다 아래 형식으로 작성:
+[주제명]
+- 핵심 주장과 근거
+- 언급된 수치, 통계, 사례
+- 관련 종목이나 산업에 미치는 영향
+(주제가 여러 개면 모두 작성)
+
+🔍 **언급된 종목 / 수치 / 키워드**
+- 종목명과 구체적 수치 (주가, 목표가, PER, 매출, 성장률 등)
+- 경제 지표, 정책, 용어 등
+
+⚠️ **리스크 & 주의사항**
+- 영상에서 언급된 리스크나 불확실성 요인
+
+💡 **핵심 인사이트 & 전망**
+- 3~4줄, 영상의 결론과 향후 투자 시사점
 """
+
 
 def summarize(video: dict, retry: int = 3) -> str:
     transcript = get_transcript(video["id"])
