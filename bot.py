@@ -18,7 +18,6 @@ from google.genai import types
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import CouldNotRetrieveTranscript
 
-# ── 수정 1: logging format 오류 수정 ──────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -132,7 +131,7 @@ def get_transcript(video_id: str) -> str | None:
         pass
     return None
 
-# ── Gemini 요약 ───────────────────────────────────────────
+# ── Gemini 요약 (429 시 재시도) ───────────────────────────
 _PROMPT_TEXT = """\
 아래는 YouTube 영상의 자막입니다. 한국어로 요약해주세요.
 
@@ -152,26 +151,40 @@ _PROMPT_MULTI = """\
 💡 **핵심 인사이트** (1~2줄)
 """
 
-def summarize(video: dict) -> str:
+def summarize(video: dict, retry: int = 3) -> str:
     transcript = get_transcript(video["id"])
-    if transcript:
-        log.info(f"자막 {len(transcript)}자 → 텍스트 요약")
-        resp = gemini.models.generate_content(
-            model=MODEL_ID,
-            contents=_PROMPT_TEXT.format(transcript=transcript[:12000]),
-        )
-    else:
-        log.info("자막 없음 → 멀티모달 요약")
-        resp = gemini.models.generate_content(
-            model=MODEL_ID,
-            contents=[
-                types.Part.from_uri(file_uri=video["url"], mime_type="video/*"),
-                types.Part(text=_PROMPT_MULTI),
-            ],
-        )
-    return resp.text
 
-# ── 수정 2: tg_send - parse_mode None 키 제거 ─────────────
+    for attempt in range(1, retry + 1):
+        try:
+            if transcript:
+                log.info(f"자막 {len(transcript)}자 → 텍스트 요약 (시도 {attempt})")
+                resp = gemini.models.generate_content(
+                    model=MODEL_ID,
+                    contents=_PROMPT_TEXT.format(transcript=transcript[:12000]),
+                )
+            else:
+                log.info(f"자막 없음 → 멀티모달 요약 (시도 {attempt})")
+                resp = gemini.models.generate_content(
+                    model=MODEL_ID,
+                    contents=[
+                        types.Part.from_uri(file_uri=video["url"], mime_type="video/*"),
+                        types.Part(text=_PROMPT_MULTI),
+                    ],
+                )
+            return resp.text
+
+        except Exception as e:
+            err = str(e)
+            if "429" in err and attempt < retry:
+                # 오류 메시지에서 retryDelay 추출, 없으면 30초 대기
+                m = re.search(r"retryDelay.*?(\d+)s", err)
+                wait = int(m.group(1)) + 5 if m else 30
+                log.warning(f"429 한도 초과 → {wait}초 후 재시도")
+                time.sleep(wait)
+            else:
+                raise
+
+# ── Telegram 전송 ─────────────────────────────────────────
 def tg_send(text: str, parse_mode: str = "Markdown"):
     payload = {"chat_id": CHAT_ID, "text": text}
     if parse_mode:
@@ -179,7 +192,6 @@ def tg_send(text: str, parse_mode: str = "Markdown"):
     try:
         r = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=15)
         if not r.ok:
-            # Markdown 실패 시 plain text 재시도
             requests.post(
                 f"{TELEGRAM_API}/sendMessage",
                 json={"chat_id": CHAT_ID, "text": text},
@@ -205,13 +217,14 @@ def run():
         log.info(f"RSS에서 {len(videos)}개 영상 확인")
 
         if not videos:
-            log.warning("영상 목록 비어있음 - RSS 접근 실패 가능")
+            log.warning("영상 목록 비어있음")
             continue
 
-        # 첫 실행: 최신 1개만 seen 등록 (스팸 방지)
+        # ── 수정: 첫 실행 시 최신 5개 전부 seen 등록 (스팸 방지) ──
         if not seen:
-            log.info("첫 실행: 최신 영상 seen 등록만 함 (요약 안 보냄)")
-            seen.add(videos[0]["id"])
+            log.info("첫 실행: 영상 5개 전부 seen 등록 (요약 안 보냄)")
+            for v in videos:
+                seen.add(v["id"])
             save_seen(seen)
             tg_send("✅ 봇 활성화됨! 다음 새 영상부터 자동 요약합니다.")
             continue
@@ -230,12 +243,12 @@ def run():
                 tg_send(f"📋 *요약*\n\n{summary}")
                 log.info(f"요약 전송 완료: {video['id']}")
             except Exception as e:
-                log.error(f"요약 실패: {e}")
+                log.error(f"요약 최종 실패: {e}")
                 tg_send(f"❌ 요약 실패\n{str(e)[:200]}", parse_mode=None)
 
             seen.add(video["id"])
             save_seen(seen)
-            time.sleep(2)
+            time.sleep(3)
 
     log.info("완료")
 
