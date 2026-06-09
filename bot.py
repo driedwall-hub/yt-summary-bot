@@ -32,7 +32,7 @@ CHAT_ID        = os.environ["TELEGRAM_CHAT_ID"]
 SEEN_FILE      = "seen_videos.json"
 
 TELEGRAM_API   = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-MODEL_ID       = "gemini-2.0-flash"
+MODEL_ID       = "gemini-2.5-flash-lite"
 
 # ── 모니터링 채널 ─────────────────────────────────────────
 CHANNELS = [
